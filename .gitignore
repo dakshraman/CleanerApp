@@ -1,0 +1,27 @@
+# Xcode
+*.xcuserdata
+*.xcuserstate
+*.xcbkptlist
+*.xcworkspace/xcuserdata
+DerivedData/
+.build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# XcodeGen
+project.yml.lock
+
+# Swift Package Manager
+.packages
+Package.resolved
+
+# Fastlane
+fastlane/report.xml
+fastlane/test_output
