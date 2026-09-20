@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum CleanupCategory: String, CaseIterable, Identifiable {
+enum CleanupCategory: String, CaseIterable, Identifiable, Sendable {
     case systemCache = "System Cache"
     case tempFiles = "Temporary Files"
     case duplicateFiles = "Duplicate Files"
@@ -24,7 +24,7 @@ enum CleanupCategory: String, CaseIterable, Identifiable {
         case .iosSimulator: return "iphone.gen2"
         case .downloads: return "arrow.down.circle"
         case .xcodeDerived: return "hammer"
-        case .malware: return "ant"
+        case .malware: return "shield.lefthalf.filled"
         case .appRemnants: return "tray.full"
         }
     }
@@ -40,22 +40,32 @@ enum CleanupCategory: String, CaseIterable, Identifiable {
         case .downloads: return .green
         case .xcodeDerived: return .red
         case .malware: return .pink
-        case .appRemnants: return .brown
+        case .appRemnants: return .indigo
         }
     }
 
     var description: String {
         switch self {
-        case .systemCache: return "Clear app and system cache files"
-        case .tempFiles: return "Remove temporary files created by apps"
-        case .duplicateFiles: return "Find and remove duplicate files"
-        case .largeFiles: return "Find files taking up significant space"
-        case .appLogs: return "Remove logs, crash reports, and diagnostics"
-        case .iosSimulator: return "Clean simulator devices, caches, and data"
-        case .downloads: return "Review and clean your Downloads folder"
-        case .xcodeDerived: return "Remove derived data, archives, and build products"
-        case .malware: return "Detect and remove adware, suspicious launch agents, and browser hijackers"
-        case .appRemnants: return "Clean leftover app data from uninstalled applications"
+        case .systemCache: return "App and system caches safe to clear"
+        case .tempFiles: return "Temporary scratch and cache files"
+        case .duplicateFiles: return "Identical duplicate files across folders"
+        case .largeFiles: return "Individual files occupying significant disk space"
+        case .appLogs: return "Old diagnostic logs and crash reports"
+        case .iosSimulator: return "Simulator device caches and legacy runtimes"
+        case .downloads: return "Downloaded installers and older archive files"
+        case .xcodeDerived: return "DerivedData, device support, and build artifacts"
+        case .malware: return "Adware signatures, suspicious launch agents, and browser hijackers"
+        case .appRemnants: return "Leftover support folders from uninstalled applications"
+        }
+    }
+
+    var defaultSelectItemsOnScan: Bool {
+        switch self {
+        case .largeFiles:
+            // Large files are personal documents/media - user must explicitly pick which ones to remove!
+            return false
+        default:
+            return true
         }
     }
 
@@ -69,7 +79,7 @@ enum CleanupCategory: String, CaseIterable, Identifiable {
     }
 }
 
-enum PlatformSupport: String {
+enum PlatformSupport: String, Sendable {
     case macOS = "macOS"
     case iOS = "iOS"
 }

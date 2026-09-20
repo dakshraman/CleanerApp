@@ -4,20 +4,23 @@
 <dict>
 	<key>SchemeUserState</key>
 	<dict>
-		<key>CleanerApp.xcscheme_^#shared#^_</key>
+		<key>MacPurge_iOS.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
 			<integer>0</integer>
 		</dict>
-		<key>CleanerApp_iOS.xcscheme_^#shared#^_</key>
-		<dict>
-			<key>orderHint</key>
-			<integer>0</integer>
-		</dict>
-		<key>CleanerApp_macOS.xcscheme_^#shared#^_</key>
+		<key>MacPurge_macOS.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
 			<integer>1</integer>
+		</dict>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>1CE77D4F30FA383C87CE87A6</key>
+		<dict>
+			<key>primary</key>
+			<true/>
 		</dict>
 	</dict>
 </dict>

@@ -1,50 +1,42 @@
 import Foundation
 
-final class TempFilesCleanerService: CleanupService {
+final class TrashCleanerService: CleanupService {
     func scan() async -> ScanResult {
         let start = Date()
         var items: [ScannedItem] = []
         let fm = FileManager.default
+        let home = NSHomeDirectory()
 
-        var tempDirs = [fm.temporaryDirectory]
-        #if os(macOS)
-        let rootTmp = URL(fileURLWithPath: "/tmp")
-        if fm.fileExists(atPath: rootTmp.path) {
-            tempDirs.append(rootTmp)
-        }
-        #endif
+        let trashURLs = [
+            URL(fileURLWithPath: "\(home)/.Trash")
+        ]
 
-        for tempDir in tempDirs {
+        for trashDir in trashURLs {
             if Task.isCancelled { break }
-            guard let contents = try? fm.contentsOfDirectory(
-                at: tempDir,
-                includingPropertiesForKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey, .isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
+            guard fm.fileExists(atPath: trashDir.path),
+                  let contents = try? fm.contentsOfDirectory(
+                    at: trashDir,
+                    includingPropertiesForKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey, .isDirectoryKey],
+                    options: []
+                  ) else { continue }
 
             for item in contents {
                 if Task.isCancelled { break }
-                let name = item.lastPathComponent
-                if name.hasPrefix(".") { continue }
-
+                guard let attrs = try? fm.attributesOfItem(atPath: item.path) else { continue }
                 var isDir: ObjCBool = false
                 fm.fileExists(atPath: item.path, isDirectory: &isDir)
-
-                let attrs = try? fm.attributesOfItem(atPath: item.path)
-                let size: Int64 = isDir.boolValue ? directorySize(item, fm: fm) : ((attrs?[.size] as? Int64) ?? 0)
-                guard size > 0 else { continue }
+                let size = isDir.boolValue ? directorySize(item, fm: fm) : ((attrs[.size] as? Int64) ?? 0)
 
                 items.append(ScannedItem(
                     url: item,
                     size: size,
                     isDirectory: isDir.boolValue,
-                    dateCreated: attrs?[.creationDate] as? Date,
-                    dateModified: attrs?[.modificationDate] as? Date
+                    dateCreated: attrs[.creationDate] as? Date,
+                    dateModified: attrs[.modificationDate] as? Date
                 ))
             }
         }
 
-        items.sort { $0.size > $1.size }
         let total = items.reduce(0) { $0 + $1.size }
         return ScanResult(category: .tempFiles, items: items, totalSize: total, duration: Date().timeIntervalSince(start))
     }
@@ -53,7 +45,7 @@ final class TempFilesCleanerService: CleanupService {
         guard let enumerator = fm.enumerator(
             at: url,
             includingPropertiesForKeys: [.fileSizeKey],
-            options: [.skipsHiddenFiles]
+            options: []
         ) else { return 0 }
 
         var total: Int64 = 0

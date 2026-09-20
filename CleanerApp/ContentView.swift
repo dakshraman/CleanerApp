@@ -1,8 +1,12 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct ContentView: View {
     @State private var viewModel = CleanupViewModel()
     @State private var showSettings = false
+    @State private var showUpdateDialog = false
 
     var body: some View {
         Group {
@@ -14,93 +18,131 @@ struct ContentView: View {
         }
         .onAppear {
             viewModel.refreshDiskInfo()
-            if case .idle = viewModel.phase {
-                Task { await viewModel.scanAll() }
+            viewModel.refreshMemoryInfo()
+
+            // Check for updates in background on launch
+            Task {
+                await UpdateService.shared.checkForUpdates(isUserInitiated: false)
+                if case .updateAvailable = UpdateService.shared.state {
+                    showUpdateDialog = true
+                }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .init("checkForUpdates"))) { _ in
+            showUpdateDialog = true
+            Task {
+                await UpdateService.shared.checkForUpdates(isUserInitiated: true)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .init("smartScan"))) { _ in
+            guard !viewModel.isOperating else { return }
+            viewModel.selectedTab = .smartCare
+            Task { await viewModel.runSmartScan() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .init("scan"))) { _ in
+            guard !viewModel.isOperating else { return }
+            Task { await viewModel.scanAll() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .init("clean"))) { _ in
+            viewModel.requestCleanSelected()
+        }
         .sheet(isPresented: $showSettings) {
-            SettingsView(diskInfo: viewModel.diskInfo, useTrash: $viewModel.useTrash)
+            SettingsView(
+                diskInfo: viewModel.diskInfo,
+                useTrash: $viewModel.useTrash,
+                downloadAgeDaysThreshold: $viewModel.downloadAgeDaysThreshold,
+                largeFileThresholdMB: $viewModel.largeFileThresholdMB,
+                includeXcodeArchives: $viewModel.includeXcodeArchives
+            )
+        }
+        .sheet(isPresented: $showUpdateDialog) {
+            UpdateDialogView()
         }
         .alert("Confirm Clean", isPresented: $viewModel.showConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Clean", role: .destructive) { Task { await viewModel.confirmClean() } }
+            Button("Clean", role: .destructive) {
+                Task { await viewModel.confirmClean() }
+            }
         } message: {
             Text(viewModel.confirmationMessage)
         }
     }
 
-    // MARK: - macOS
+    // MARK: - macOS Navigation Split View
 
     #if os(macOS)
     private var macBody: some View {
         NavigationSplitView {
             sidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 320)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 320)
         } detail: {
-            detailPanel
-                .frame(minWidth: 420, minHeight: 400)
+            detailContent
+                .frame(minWidth: 540, minHeight: 480)
         }
         .toolbar { toolbarContent }
     }
 
     private var sidebar: some View {
-        List(selection: $viewModel.selectedCategory) {
+        List(selection: $viewModel.selectedTab) {
+            // Live System Mini Card
             Section {
-                LabeledContent("Free", value: viewModel.diskInfo.formattedFree)
-                    .foregroundStyle(.green)
-                    .font(.subheadline)
-                LabeledContent("Used", value: "\(Int(viewModel.diskInfo.usedPercentage * 100))%")
-                    .font(.subheadline)
+                VStack(spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Macintosh HD")
+                                .font(.headline)
+                            Text("\(viewModel.diskInfo.formattedFree) free of \(viewModel.diskInfo.formattedTotal)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text("\(Int(viewModel.diskInfo.usedPercentage * 100))%")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundStyle(viewModel.diskInfo.usedPercentage > 0.85 ? .orange : .primary)
+                    }
+
+                    ProgressView(value: viewModel.diskInfo.usedPercentage)
+                        .progressViewStyle(.linear)
+                        .tint(viewModel.diskInfo.usedPercentage > 0.9 ? .red : viewModel.diskInfo.usedPercentage > 0.75 ? .orange : .blue)
+                }
+                .padding(.vertical, 4)
             } header: {
-                Label("Disk", systemImage: "externaldrive")
+                Label("Status", systemImage: "internaldrive")
             }
 
-            Section {
-                ForEach(viewModel.filteredCategories) { category in
-                    HStack(spacing: 10) {
-                        Button {
-                            viewModel.selectCategory(category, selected: !viewModel.selectedCategories.contains(category))
-                        } label: {
-                            Image(systemName: viewModel.selectedCategories.contains(category) ? "checkmark.square.fill" : "square")
-                                .font(.body)
-                                .foregroundStyle(viewModel.selectedCategories.contains(category) ? .blue : .secondary.opacity(0.4))
+            // Group tabs by Section Title
+            ForEach(sidebarSections, id: \.title) { section in
+                Section(section.title) {
+                    ForEach(section.tabs) { tab in
+                        HStack(spacing: 10) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(
+                                        LinearGradient(colors: tab.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
+                                    )
+                                    .frame(width: 24, height: 24)
+                                Image(systemName: tab.iconName)
+                                    .font(.caption)
+                                    .foregroundStyle(.white)
+                            }
+
+                            Text(tab.rawValue)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            Spacer()
+
+                            // Badge for size if available
+                            if let badge = tabBadge(for: tab) {
+                                Text(badge)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
                         }
-                        .buttonStyle(.plain)
-
-                        Image(systemName: category.iconName)
-                            .foregroundStyle(category.tint)
-                            .frame(width: 18)
-
-                        Text(category.rawValue)
-                            .font(.subheadline)
-                            .lineLimit(1)
-
-                        Spacer()
-
-                        if let result = viewModel.scanResults[category], result.totalSize > 0 {
-                            Text(result.formattedTotalSize)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                    }
-                    .padding(.vertical, 2)
-                    .tag(category)
-                }
-            } header: {
-                HStack {
-                    Text("Categories")
-                    Spacer()
-                    if viewModel.selectedCategories.count == viewModel.filteredCategories.count {
-                        Button("None") { viewModel.deselectAll() }
-                            .font(.caption)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button("All") { viewModel.selectAll() }
-                            .font(.caption)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
+                        .padding(.vertical, 2)
+                        .tag(tab)
                     }
                 }
             }
@@ -109,432 +151,159 @@ struct ContentView: View {
         .disabled(viewModel.isOperating)
     }
 
-    private var detailPanel: some View {
-        Group {
-            switch viewModel.phase {
-            case .idle:
-                DashboardView(viewModel: viewModel)
-            case .scanned:
-                if let cat = viewModel.selectedCategory, viewModel.scanResults[cat] != nil {
-                    CategoryFilesView(category: cat, viewModel: viewModel)
-                } else {
-                    DashboardView(viewModel: viewModel)
-                }
-            case .scanning(let category, let progress):
-                ScanProgressView(currentCategory: category, progress: progress)
-            case .cleaning(let progress):
-                CleaningProgressView(progress: progress, category: viewModel.cleanupResults.last?.category.rawValue ?? "")
-            case .complete:
-                CompleteView(viewModel: viewModel)
-            }
+    private var sidebarSections: [(title: String, tabs: [NavigationTab])] {
+        [
+            ("SMART CARE", [.smartCare]),
+            ("CLEANUP", [.systemJunk, .mailAttachments, .trashBins]),
+            ("PROTECTION", [.malwareRemoval, .privacy]),
+            ("SPEED", [.maintenance, .optimization]),
+            ("APPLICATIONS", [.uninstaller, .appRemnants]),
+            ("FILES", [.spaceLens, .largeAndOld, .duplicates])
+        ]
+    }
+
+    private func tabBadge(for tab: NavigationTab) -> String? {
+        switch tab {
+        case .systemJunk:
+            let size = (viewModel.scanResults[.systemCache]?.totalSize ?? 0) + (viewModel.scanResults[.tempFiles]?.totalSize ?? 0) + (viewModel.scanResults[.appLogs]?.totalSize ?? 0)
+            return size > 0 ? viewModel.formatBytes(size) : nil
+        case .mailAttachments:
+            let size = viewModel.scanResults[.downloads]?.totalSize ?? 0
+            return size > 0 ? viewModel.formatBytes(size) : nil
+        case .malwareRemoval:
+            let count = viewModel.scanResults[.malware]?.itemCount ?? 0
+            return count > 0 ? "\(count) threats" : nil
+        case .optimization:
+            let broken = viewModel.brokenStartupItemsCount
+            return broken > 0 ? "\(broken) broken" : nil
+        case .uninstaller:
+            return viewModel.installedApps.isEmpty ? nil : "\(viewModel.installedApps.count) apps"
+        case .appRemnants:
+            let size = viewModel.scanResults[.appRemnants]?.totalSize ?? 0
+            return size > 0 ? viewModel.formatBytes(size) : nil
+        case .largeAndOld:
+            let size = viewModel.scanResults[.largeFiles]?.totalSize ?? 0
+            return size > 0 ? viewModel.formatBytes(size) : nil
+        case .duplicates:
+            let size = viewModel.scanResults[.duplicateFiles]?.totalSize ?? 0
+            return size > 0 ? viewModel.formatBytes(size) : nil
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Detail Router
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch viewModel.selectedTab {
+        case .smartCare:
+            SmartCareView(viewModel: viewModel)
+        case .uninstaller:
+            AppUninstallerView(viewModel: viewModel)
+        case .maintenance:
+            MaintenanceView(viewModel: viewModel)
+        case .optimization:
+            OptimizationView(viewModel: viewModel)
+        case .spaceLens:
+            SpaceLensView(viewModel: viewModel)
+        case .privacy:
+            PrivacyModuleView(viewModel: viewModel)
+        case .trashBins:
+            TrashBinsView(viewModel: viewModel)
+        case .systemJunk:
+            categoryDetailView(for: .systemCache)
+        case .mailAttachments:
+            categoryDetailView(for: .downloads)
+        case .malwareRemoval:
+            categoryDetailView(for: .malware)
+        case .appRemnants:
+            categoryDetailView(for: .appRemnants)
+        case .largeAndOld:
+            categoryDetailView(for: .largeFiles)
+        case .duplicates:
+            categoryDetailView(for: .duplicateFiles)
+        }
+    }
+
+    @ViewBuilder
+    private func categoryDetailView(for category: CleanupCategory) -> some View {
+        if case .scanning(let currentCat, let progress) = viewModel.phase {
+            ScanProgressView(
+                currentCategory: currentCat,
+                progress: progress,
+                onCancel: { viewModel.cancelOperation() }
+            )
+        } else if case .cleaning(let currentCat, let progress) = viewModel.phase {
+            CleaningProgressView(
+                progress: progress,
+                category: currentCat,
+                onCancel: { viewModel.cancelOperation() }
+            )
+        } else if case .complete = viewModel.phase {
+            CompleteView(viewModel: viewModel)
+        } else {
+            CategoryFilesView(category: category, viewModel: viewModel)
         }
     }
     #endif
 
-    // MARK: - iOS
+    // MARK: - iOS View
 
     #if os(iOS)
     private var iosBody: some View {
         NavigationStack {
-            DashboardView(viewModel: viewModel)
-                .navigationTitle("Cleaner")
+            SmartCareView(viewModel: viewModel)
+                .navigationTitle("MacPurge")
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button { showSettings = true } label: {
                             Image(systemName: "gearshape")
                         }
-                        .disabled(viewModel.isOperating)
                     }
                 }
         }
     }
     #endif
 
-    // MARK: - Toolbar (macOS)
+    // MARK: - Toolbar
 
+    #if os(macOS)
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            switch viewModel.phase {
-            case .idle, .scanned:
-                HStack(spacing: 4) {
-                    Button { showSettings = true } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .disabled(viewModel.isOperating)
-
-                    if viewModel.totalScannableSpace > 0 {
-                        Button { viewModel.requestCleanSelected() } label: {
-                            Label("Clean", systemImage: "trash")
-                        }
-                        .disabled(!viewModel.hasSelectedItems || viewModel.isOperating)
-                    }
+            HStack(spacing: 10) {
+                Button {
+                    Task { await viewModel.runSmartScan() }
+                } label: {
+                    Label("Smart Scan", systemImage: "sparkles")
                 }
-            case .complete:
-                Button("Done") { viewModel.dismissComplete() }
-            case .scanning, .cleaning:
-                if viewModel.isOperating {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                        .controlSize(.small)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Dashboard
-
-struct DashboardView: View {
-    @Bindable var viewModel: CleanupViewModel
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                DiskGaugeView(diskInfo: viewModel.diskInfo)
-                    .frame(maxWidth: 280)
-
-                if viewModel.totalScannableSpace > 0 {
-                    recoverableCard
-                } else if case .scanned = viewModel.phase {
-                    ContentUnavailableView {
-                        Label("Nothing to Clean", systemImage: "checkmark.circle")
-                    } description: {
-                        Text("All scanned categories are empty. Your system looks clean!")
-                    }
-                } else if case .scanning = viewModel.phase {
-                    EmptyView()
-                } else {
-                    scanningPrompt
-                }
-
-                #if os(iOS)
-                if viewModel.totalScannableSpace > 0 || viewModel.phase == .scanned {
-                    iosCategoryList
-                }
-                #endif
-
-                if !viewModel.cleanupResults.isEmpty {
-                    lastCleanupBanner
-                }
-
-                Spacer(minLength: 60)
-            }
-            .padding(24)
-        }
-        #if os(macOS)
-        .background(Color(.sRGB, red: 0.95, green: 0.95, blue: 0.97).opacity(0.4))
-        #endif
-    }
-
-    private var recoverableCard: some View {
-        VStack(spacing: 12) {
-            Text("Recoverable Space")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Text(viewModel.formatBytes(viewModel.totalScannableSpace))
-                .font(.system(size: 44, weight: .bold, design: .rounded))
-                .foregroundStyle(
-                    LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing)
-                )
-
-            Text("\(viewModel.selectedCategories.count) of \(viewModel.filteredCategories.count) categories selected")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-
-            if viewModel.selectedScannableSpace < viewModel.totalScannableSpace {
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(.orange)
-                        .frame(width: max(4, CGFloat(viewModel.selectedScannableSpace) / CGFloat(viewModel.totalScannableSpace) * 200), height: 6)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(.quaternary)
-                        .frame(width: max(4, CGFloat(viewModel.totalScannableSpace - viewModel.selectedScannableSpace) / CGFloat(viewModel.totalScannableSpace) * 200), height: 6)
-                }
-                .frame(width: 200)
-            }
-
-            Button(action: { viewModel.requestCleanSelected() }) {
-                Label("Clean (\(viewModel.formatBytes(viewModel.selectedScannableSpace)))", systemImage: "trash")
-                    .font(.headline)
-                    .frame(maxWidth: 260, minHeight: 40)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.orange)
-            .disabled(!viewModel.hasSelectedItems || viewModel.isOperating)
-        }
-        .padding(24)
-        .background(.background, in: .rect(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
-    }
-
-    private var scanningPrompt: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 40))
-                .foregroundStyle(.tint)
-            Text("Scan your system to find files that can be safely removed")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(40)
-    }
-
-    #if os(iOS)
-    private var iosCategoryList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(viewModel.filteredCategories.enumerated()), id: \.element.id) { index, cat in
-                NavigationLink(value: cat) {
-                    CleanupRowView(
-                        category: cat,
-                        scanResult: viewModel.scanResults[cat],
-                        isSelected: viewModel.selectedCategories.contains(cat),
-                        showCheckbox: true,
-                        onToggle: { viewModel.selectCategory(cat, selected: !viewModel.selectedCategories.contains(cat)) }
-                    )
-                }
+                .help("Run One-Click Smart Scan (⇧⌘S)")
                 .disabled(viewModel.isOperating)
 
-                if index < viewModel.filteredCategories.count - 1 {
-                    Divider().padding(.leading, 42)
+                Button {
+                    Task { await viewModel.scanAll() }
+                } label: {
+                    Label("Scan All", systemImage: "arrow.clockwise")
+                }
+                .help("Scan All Categories (⌘R)")
+                .disabled(viewModel.isOperating)
+
+                Button { showSettings = true } label: {
+                    Image(systemName: "gearshape")
+                }
+                .help("Preferences")
+
+                if viewModel.selectedScannableSpace > 0 {
+                    Button { viewModel.requestCleanSelected() } label: {
+                        Label("Clean (\(viewModel.formatBytes(viewModel.selectedScannableSpace)))", systemImage: "trash.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(viewModel.isOperating)
                 }
             }
-        }
-        .padding()
-        .background(.background, in: .rect(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.03), radius: 6, y: 2)
-        .navigationDestination(for: CleanupCategory.self) { cat in
-            CategoryFilesView(category: cat, viewModel: viewModel)
-                .navigationTitle(cat.rawValue)
         }
     }
     #endif
-
-    private var lastCleanupBanner: some View {
-        HStack {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("Last cleaned: \(viewModel.formatBytes(viewModel.totalFreedSpace))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button("Clear") { viewModel.cleanupResults = [] }
-                .font(.caption)
-        }
-        .padding(10)
-        .background(.ultraThinMaterial, in: .rect(cornerRadius: 8))
-    }
-}
-
-// MARK: - Disk Gauge
-
-struct DiskGaugeView: View {
-    let diskInfo: AppState
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .stroke(.quaternary.opacity(0.3), lineWidth: 14)
-
-                Circle()
-                    .trim(from: 0, to: diskInfo.usedPercentage)
-                    .stroke(
-                        AngularGradient(
-                            colors: diskInfo.usedPercentage > 0.9 ? [.red, .orange] : diskInfo.usedPercentage > 0.75 ? [.orange, .yellow] : [.green, .blue, .green],
-                            center: .center,
-                            startAngle: .degrees(-90),
-                            endAngle: .degrees(270)
-                        ),
-                        style: .init(lineWidth: 14, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .animation(.smooth(duration: 1), value: diskInfo.usedPercentage)
-
-                VStack(spacing: 2) {
-                    Text("\(Int(diskInfo.usedPercentage * 100))%")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundStyle(
-                            diskInfo.usedPercentage > 0.9 ? .red : diskInfo.usedPercentage > 0.75 ? .orange : .primary
-                        )
-                    Text("used")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .frame(width: 160, height: 160)
-
-            HStack(spacing: 20) {
-                Label(diskInfo.formattedFree, systemImage: "arrow.down.circle")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-                Text("|")
-                    .foregroundStyle(.tertiary)
-                Label(diskInfo.formattedUsed, systemImage: "square.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-// MARK: - Complete
-
-struct CompleteView: View {
-    @Bindable var viewModel: CleanupViewModel
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(.green)
-                .symbolEffect(.bounce, options: .speed(0.5), value: viewModel.cleanupResults.count)
-
-            Text("Cleaning Complete!")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("Freed \(viewModel.formatBytes(viewModel.totalFreedSpace))")
-                .font(.system(size: 32, weight: .bold, design: .rounded))
-                .foregroundStyle(.green)
-
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(viewModel.cleanupResults) { result in
-                    HStack {
-                        Image(systemName: result.hasErrors ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                            .foregroundStyle(result.hasErrors ? .orange : .green)
-                        Text(result.category.rawValue)
-                            .font(.subheadline)
-                        Spacer()
-                        Text(result.formattedSpace)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.green)
-                        Text("(\(result.filesRemoved))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding()
-            .background(.background, in: .rect(cornerRadius: 12))
-
-            if viewModel.totalErrors > 0 {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                    Text("\(viewModel.totalErrors) error\(viewModel.totalErrors == 1 ? "" : "s") occurred")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button("Done") { viewModel.dismissComplete() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                Button("Scan Again", systemImage: "arrow.clockwise") {
-                    Task { await viewModel.scanAll() }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            }
-            .disabled(viewModel.isOperating)
-        }
-        .padding(40)
-        .frame(maxWidth: 480)
-    }
-}
-
-// MARK: - Category Files
-
-struct CategoryFilesView: View {
-    let category: CleanupCategory
-    @Bindable var viewModel: CleanupViewModel
-    @State private var sortAscending = false
-
-    var body: some View {
-        Group {
-            if let result = viewModel.scanResults[category] {
-                List {
-                    Section("Summary") {
-                        LabeledContent("Items Found", value: "\(result.itemCount)")
-                        LabeledContent("Total Size", value: result.formattedTotalSize)
-                        LabeledContent("Scan Duration", value: String(format: "%.1f sec", result.duration))
-                    }
-
-                    if !result.items.isEmpty {
-                        Section {
-                            ForEach(sortedItems(result.items)) { item in
-                                HStack(spacing: 10) {
-                                    Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
-                                        .foregroundStyle(item.isDirectory ? category.tint : .secondary)
-                                        .font(.subheadline)
-
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(item.fileName)
-                                            .font(.subheadline)
-                                            .lineLimit(1)
-                                        Text(item.parentPath)
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                            .lineLimit(1)
-                                    }
-
-                                    Spacer()
-
-                                    Text(item.formattedSize)
-                                        .font(.subheadline)
-                                        .monospacedDigit()
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.vertical, 2)
-                            }
-                        } header: {
-                            HStack {
-                                Text("Files")
-                                    .font(.subheadline)
-                                Spacer()
-                                Button { withAnimation { sortAscending.toggle() } } label: {
-                                    HStack(spacing: 2) {
-                                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                                        Text("Size")
-                                    }
-                                    .font(.caption)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-
-                    Section {
-                        Button(role: .destructive) {
-                            viewModel.requestCleanCategory(category)
-                        } label: {
-                            Label("Clean Category (\(result.formattedTotalSize))", systemImage: "trash")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .disabled(result.totalSize == 0 || viewModel.isOperating)
-                    }
-                }
-                #if os(macOS)
-                .listStyle(.inset)
-                #endif
-                .navigationTitle(category.rawValue)
-            } else {
-                ContentUnavailableView {
-                    Label("No Data", systemImage: "tray")
-                } description: {
-                    Text("Scan this category to see its contents.")
-                }
-            }
-        }
-    }
-
-    private func sortedItems(_ items: [ScannedItem]) -> [ScannedItem] {
-        sortAscending ? items.sorted { $0.size < $1.size } : items.sorted { $0.size > $1.size }
-    }
 }

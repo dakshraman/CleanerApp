@@ -1,0 +1,40 @@
+name: Build & Verify MacPurge
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-macos:
+    name: Build macOS Application
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build macOS App
+        run: |
+          xcodebuild build \
+            -project MacPurge.xcodeproj \
+            -scheme MacPurge_macOS \
+            -destination "platform=macOS" \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO
+
+  build-ios:
+    name: Build iOS Application
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build iOS App
+        run: |
+          xcodebuild build \
+            -project MacPurge.xcodeproj \
+            -scheme MacPurge_iOS \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO

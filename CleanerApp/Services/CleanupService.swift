@@ -1,5 +1,5 @@
 import Foundation
 
-protocol CleanupService {
+protocol CleanupService: Sendable {
     func scan() async -> ScanResult
 }

@@ -1,15 +1,27 @@
 import Foundation
 
 final class LargeFileService: CleanupService {
-    private let scanPaths = [
-        NSHomeDirectory() + "/Downloads",
-        NSHomeDirectory() + "/Documents",
-        NSHomeDirectory() + "/Desktop",
-        NSHomeDirectory() + "/Movies",
-        NSHomeDirectory() + "/Music",
-        NSHomeDirectory() + "/Pictures"
-    ]
-    private let minimumSize: Int64 = 100 * 1024 * 1024
+    let minimumSizeMB: Int
+
+    init(minimumSizeMB: Int = 100) {
+        self.minimumSizeMB = minimumSizeMB
+    }
+
+    private var minimumSize: Int64 {
+        Int64(minimumSizeMB) * 1024 * 1024
+    }
+
+    private var scanPaths: [String] {
+        let home = NSHomeDirectory()
+        return [
+            home + "/Downloads",
+            home + "/Documents",
+            home + "/Desktop",
+            home + "/Movies",
+            home + "/Music",
+            home + "/Pictures"
+        ]
+    }
 
     func scan() async -> ScanResult {
         let start = Date()
@@ -17,17 +29,26 @@ final class LargeFileService: CleanupService {
         let fm = FileManager.default
 
         for path in scanPaths {
+            if Task.isCancelled { break }
             let url = URL(fileURLWithPath: path)
             guard fm.fileExists(atPath: path),
-                  let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
+                  let enumerator = fm.enumerator(
+                    at: url,
+                    includingPropertiesForKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey, .isDirectoryKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                  ) else { continue }
+
             while let fileURL = enumerator.nextObject() as? URL {
+                if Task.isCancelled { break }
                 guard let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
                       let fileSize = attrs[.size] as? Int64,
-                      fileSize >= minimumSize else { continue }
+                      fileSize >= minimumSize,
+                      attrs[.type] as? FileAttributeType == .typeRegular else { continue }
+
                 items.append(ScannedItem(
                     url: fileURL,
                     size: fileSize,
-                    isDirectory: (attrs[.type] as? FileAttributeType) == .typeDirectory,
+                    isDirectory: false,
                     dateCreated: attrs[.creationDate] as? Date,
                     dateModified: attrs[.modificationDate] as? Date
                 ))

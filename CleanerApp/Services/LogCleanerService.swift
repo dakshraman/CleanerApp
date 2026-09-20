@@ -7,25 +7,55 @@ final class LogCleanerService: CleanupService {
         let fm = FileManager.default
 
         for path in logPaths {
+            if Task.isCancelled { break }
             let url = URL(fileURLWithPath: path)
             guard fm.fileExists(atPath: path),
-                  let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey, .creationDateKey], options: [.skipsHiddenFiles]) else { continue }
-            while let fileURL = enumerator.nextObject() as? URL {
-                guard let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
-                      let fileSize = attrs[.size] as? Int64,
-                      fileSize > 0 else { continue }
+                  let contents = try? fm.contentsOfDirectory(
+                    at: url,
+                    includingPropertiesForKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey, .isDirectoryKey],
+                    options: [.skipsHiddenFiles]
+                  ) else { continue }
+
+            for item in contents {
+                if Task.isCancelled { break }
+                guard let attrs = try? fm.attributesOfItem(atPath: item.path) else { continue }
+                var isDir: ObjCBool = false
+                fm.fileExists(atPath: item.path, isDirectory: &isDir)
+
+                let size: Int64 = isDir.boolValue ? directorySize(item, fm: fm) : ((attrs[.size] as? Int64) ?? 0)
+                guard size > 0 else { continue }
+
                 items.append(ScannedItem(
-                    url: fileURL,
-                    size: fileSize,
-                    isDirectory: (attrs[.type] as? FileAttributeType) == .typeDirectory,
+                    url: item,
+                    size: size,
+                    isDirectory: isDir.boolValue,
                     dateCreated: attrs[.creationDate] as? Date,
                     dateModified: attrs[.modificationDate] as? Date
                 ))
             }
         }
 
+        items.sort { $0.size > $1.size }
         let total = items.reduce(0) { $0 + $1.size }
         return ScanResult(category: .appLogs, items: items, totalSize: total, duration: Date().timeIntervalSince(start))
+    }
+
+    private func directorySize(_ url: URL, fm: FileManager) -> Int64 {
+        guard let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        while let fileURL = enumerator.nextObject() as? URL {
+            if let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
+               let size = attrs[.size] as? Int64,
+               (attrs[.type] as? FileAttributeType) == .typeRegular {
+                total += size
+            }
+        }
+        return total
     }
 
     private var logPaths: [String] {

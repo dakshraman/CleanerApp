@@ -1,28 +1,30 @@
-name: CleanerApp
+name: MacPurge
 options:
-  bundleIdPrefix: com.cleaner
+  bundleIdPrefix: com.dakshraman
   deploymentTarget:
     macOS: "14.0"
     iOS: "17.0"
   xcodeVersion: "16.0"
+  createIntermediateGroups: true
 
 settings:
   SWIFT_VERSION: "5.9"
+  TARGETED_DEVICE_FAMILY: "1,2"
 
 targets:
-  CleanerApp:
+  MacPurge:
     type: application
     platform: [macOS, iOS]
     sources:
       - CleanerApp
     settings:
-      PRODUCT_BUNDLE_IDENTIFIER: com.cleaner.app
-      INFOPLIST_FILE: CleanerApp/Resources/Info.plist
+      PRODUCT_BUNDLE_IDENTIFIER: com.dakshraman.cleanerapp
       MACOSX_DEPLOYMENT_TARGET: "14.0"
       IPHONEOS_DEPLOYMENT_TARGET: "17.0"
       MARKETING_VERSION: "1.0.0"
       CURRENT_PROJECT_VERSION: "1"
-      PRODUCT_NAME: "CleanerApp"
+      PRODUCT_NAME: "MacPurge"
       CODE_SIGN_STYLE: Automatic
+      INFOPLIST_FILE: CleanerApp/Resources/Info.plist
     entitlements:
       path: CleanerApp/Resources/CleanerApp.entitlements

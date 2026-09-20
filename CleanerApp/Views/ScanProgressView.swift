@@ -3,6 +3,7 @@ import SwiftUI
 struct ScanProgressView: View {
     let currentCategory: String
     let progress: Double
+    var onCancel: (() -> Void)? = nil
 
     @State private var rotation = 0.0
 
@@ -12,42 +13,52 @@ struct ScanProgressView: View {
                 Circle()
                     .stroke(.quaternary.opacity(0.3), lineWidth: 8)
                 Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(.tint, style: .init(lineWidth: 8, lineCap: .round))
+                    .trim(from: 0, to: max(0.02, progress))
+                    .stroke(
+                        LinearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        style: .init(lineWidth: 8, lineCap: .round)
+                    )
                     .rotationEffect(.degrees(-90))
                     .animation(.smooth(duration: 0.3), value: progress)
 
-                Image(systemName: "magnifyingglass")
-                    .font(.title)
-                    .foregroundStyle(.tint)
-                    .rotationEffect(.degrees(rotation))
-                    .onAppear {
-                        withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
-                            rotation = 360
-                        }
-                    }
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.blue)
             }
-            .frame(width: 80, height: 80)
+            .frame(width: 84, height: 84)
 
-            VStack(spacing: 4) {
-                Text("Scanning...")
-                    .font(.headline)
+            VStack(spacing: 6) {
+                Text("Scanning System...")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+
                 if !currentCategory.isEmpty {
                     Text(currentCategory)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .transition(.opacity)
                 }
             }
 
-            ProgressView(value: progress)
-                .progressViewStyle(.linear)
-                .tint(.blue)
-                .frame(maxWidth: 200)
+            VStack(spacing: 8) {
+                ProgressView(value: max(0.02, progress))
+                    .progressViewStyle(.linear)
+                    .tint(.blue)
+                    .frame(maxWidth: 240)
 
-            Text("\(Int(progress * 100))%")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+                Text("\(Int(progress * 100))%")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            if let onCancel {
+                Button("Cancel Scan", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .padding(.top, 8)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
@@ -57,24 +68,38 @@ struct ScanProgressView: View {
 struct CleaningProgressView: View {
     let progress: Double
     let category: String
+    var onCancel: (() -> Void)? = nil
 
-    @State private var scale: CGFloat = 1
+    @State private var isPulsing = false
 
     var body: some View {
         VStack(spacing: 24) {
-            Image(systemName: "trash")
-                .font(.system(size: 40))
-                .foregroundStyle(.red)
-                .scaleEffect(scale)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                        scale = 1.2
-                    }
-                }
+            ZStack {
+                Circle()
+                    .stroke(.quaternary.opacity(0.3), lineWidth: 8)
+                Circle()
+                    .trim(from: 0, to: max(0.02, progress))
+                    .stroke(
+                        LinearGradient(colors: [.orange, .red], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        style: .init(lineWidth: 8, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .animation(.smooth(duration: 0.3), value: progress)
 
-            VStack(spacing: 4) {
-                Text("Cleaning...")
-                    .font(.headline)
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.red)
+                    .scaleEffect(isPulsing ? 1.15 : 0.95)
+                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isPulsing)
+                    .onAppear { isPulsing = true }
+            }
+            .frame(width: 84, height: 84)
+
+            VStack(spacing: 6) {
+                Text("Cleaning Files...")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+
                 if !category.isEmpty {
                     Text(category)
                         .font(.subheadline)
@@ -82,15 +107,25 @@ struct CleaningProgressView: View {
                 }
             }
 
-            ProgressView(value: progress)
-                .progressViewStyle(.linear)
-                .tint(.red)
-                .frame(maxWidth: 200)
+            VStack(spacing: 8) {
+                ProgressView(value: max(0.02, progress))
+                    .progressViewStyle(.linear)
+                    .tint(.red)
+                    .frame(maxWidth: 240)
 
-            Text("\(Int(progress * 100))%")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+                Text("\(Int(progress * 100))%")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            if let onCancel {
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .padding(.top, 8)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
