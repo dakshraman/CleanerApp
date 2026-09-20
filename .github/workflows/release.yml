@@ -1,0 +1,105 @@
+name: Release & Distribute MacPurge
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      draft:
+        description: 'Create as draft release'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Version Tag
+        id: version_step
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "tag=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.0.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build MacPurge macOS Release Binary
+        run: |
+          xcodebuild build \
+            -project MacPurge.xcodeproj \
+            -scheme MacPurge_macOS \
+            -configuration Release \
+            -derivedDataPath build/ \
+            -destination "platform=macOS" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package Release Assets (.dmg & .zip)
+        run: |
+          mkdir -p dist
+          APP_PATH="build/Build/Products/Release/MacPurge.app"
+          cp -R "$APP_PATH" dist/
+
+          cd dist
+          zip -r -y "MacPurge-${{ env.VERSION }}.zip" MacPurge.app
+          hdiutil create -volname "MacPurge" -srcfolder MacPurge.app -ov -format UDZO "MacPurge-${{ env.VERSION }}.dmg"
+
+          # Generate SHA256 checksums
+          shasum -a 256 "MacPurge-${{ env.VERSION }}.zip" > "MacPurge-${{ env.VERSION }}.zip.sha256"
+          shasum -a 256 "MacPurge-${{ env.VERSION }}.dmg" > "MacPurge-${{ env.VERSION }}.dmg.sha256"
+          cd ..
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 "${{ env.VERSION }}^" 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            LOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"* %s (%h)" --no-merges)
+          else
+            LOG=$(git log -n 15 --pretty=format:"* %s (%h)" --no-merges)
+          fi
+          echo "### What's Changed" > release_notes.md
+          echo "$LOG" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Verification Hashes" >> release_notes.md
+          echo '```' >> release_notes.md
+          cat dist/*.sha256 >> release_notes.md
+          echo '```' >> release_notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: MacPurge ${{ env.VERSION }}
+          body_path: release_notes.md
+          draft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+          files: |
+            dist/MacPurge-${{ env.VERSION }}.dmg
+            dist/MacPurge-${{ env.VERSION }}.zip
+            dist/MacPurge-${{ env.VERSION }}.dmg.sha256
+            dist/MacPurge-${{ env.VERSION }}.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
